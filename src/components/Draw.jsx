@@ -30,14 +30,14 @@ const HANDLE_SIZE = 8; // canvas units
 const getHandles = (shape) => {
   const { x, y, w, h } = shape;
   return [
-    { x: x,         y: y         }, // 0 TL
-    { x: x + w / 2, y: y         }, // 1 TC
-    { x: x + w,     y: y         }, // 2 TR
-    { x: x,         y: y + h / 2 }, // 3 ML
-    { x: x + w,     y: y + h / 2 }, // 4 MR
-    { x: x,         y: y + h     }, // 5 BL
-    { x: x + w / 2, y: y + h     }, // 6 BC
-    { x: x + w,     y: y + h     }, // 7 BR
+    { x: x, y: y }, // 0 TL
+    { x: x + w / 2, y: y }, // 1 TC
+    { x: x + w, y: y }, // 2 TR
+    { x: x, y: y + h / 2 }, // 3 ML
+    { x: x + w, y: y + h / 2 }, // 4 MR
+    { x: x, y: y + h }, // 5 BL
+    { x: x + w / 2, y: y + h }, // 6 BC
+    { x: x + w, y: y + h }, // 7 BR
   ];
 };
 
@@ -57,7 +57,7 @@ const hitImage = (shape, pos) =>
 
 const HANDLE_CURSORS = [
   "nw-resize", "n-resize", "ne-resize",
-  "w-resize",              "e-resize",
+  "w-resize", "e-resize",
   "sw-resize", "s-resize", "se-resize",
 ];
 
@@ -140,6 +140,23 @@ const drawShape = (ctx, shape) => {
         ctx.fillText(line, shape.x, shape.y + (i + 1) * (shape.fontSize ?? 18) * 1.3)
       );
       break;
+    case "code": {
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = "#6965db";
+      ctx.lineWidth = 2;
+
+      // box
+      ctx.fillRect(shape.x, shape.y, shape.w, shape.h);
+      ctx.strokeRect(shape.x, shape.y, shape.w, shape.h);
+
+      // text
+      ctx.fillStyle = "#000";
+      ctx.font = "14px sans-serif";
+
+      const text = shape.time || "Code";
+      ctx.fillText(text, shape.x + 8, shape.y + 20);
+      break;
+    }
     default: break;
   }
   ctx.restore();
@@ -184,30 +201,44 @@ const redrawAll = (canvas, ctx, shapes, offset, zoom, darkMode, selectedIdx) => 
 
 // ─── component ───────────────────────────────────────────────────────────────
 const ExcalidrawClone = () => {
-  const canvasRef   = useRef(null);
-  const ctxRef      = useRef(null);
-  const fileInputRef   = useRef(null);
-  const loadInputRef   = useRef(null);
+  const canvasRef = useRef(null);
+  const ctxRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const loadInputRef = useRef(null);
 
   // ── save session ──────────────────────────────────────────────────────────
   const saveSession = () => {
-    // Strip non-serialisable fields, keep src (base64 is fine in JSON)
-    const exportShapes = shapesRef.current.map(s => {
-      const { ...rest } = s;
-      return rest;
-    });
+    const exportShapes = shapesRef.current.map(s => ({ ...s }));
+
     const session = {
       version: 1,
       shapes: exportShapes,
       offset: offsetRef.current,
       zoom: zoomRef.current,
       darkMode: darkModeRef.current,
+
+      codes: codes,
+      question: currentQuestion,
     };
-    const blob = new Blob([JSON.stringify(session, null, 2)], { type: "application/json" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = "drawing-session.json";
+
+    const blob = new Blob([JSON.stringify(session, null, 2)], {
+      type: "application/json",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    let fileName = "drawing-session.json";
+
+    if (currentQuestion) {
+      const safeTitle = currentQuestion.title
+        .replace(/[^\w\s]/gi, "")   // remove special chars
+        .replace(/\s+/g, "-");      // spaces → dash
+
+      fileName = `${currentQuestion.id}-${safeTitle}.json`;
+    }
+
+    a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -216,78 +247,104 @@ const ExcalidrawClone = () => {
   const handleLoadSession = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const session = JSON.parse(ev.target.result);
         if (!session.shapes) throw new Error("Invalid file");
-
-        // Pre-load all images into cache, then restore
+        if (session.codes) {
+          setCodes(session.codes);
+        }
         const imagesToLoad = session.shapes.filter(s => s.type === "image");
+
         let loaded = 0;
         const afterLoad = () => {
           shapesRef.current = session.shapes;
           historyRef.current = [[], [...session.shapes]];
           redoStackRef.current = [];
+
           const newOffset = session.offset ?? { x: 0, y: 0 };
-          const newZoom   = session.zoom   ?? 1;
+          const newZoom = session.zoom ?? 1;
+
           offsetRef.current = newOffset;
-          zoomRef.current   = newZoom;
+          zoomRef.current = newZoom;
+
           setOffset(newOffset);
           setZoom(newZoom);
+
           if (session.darkMode !== undefined) {
             darkModeRef.current = session.darkMode;
             setDarkMode(session.darkMode);
           }
+
+          // ✅ RESTORE QUESTION
+          if (session.question) {
+            setCurrentQuestion(session.question);
+          }
+
           setSelectedImg(-1);
           repaint();
         };
 
-        if (imagesToLoad.length === 0) { afterLoad(); return; }
+        if (imagesToLoad.length === 0) {
+          afterLoad();
+          return;
+        }
+
         imagesToLoad.forEach(s => {
           loadImage(s.src, () => {
             loaded++;
             if (loaded === imagesToLoad.length) afterLoad();
           });
         });
+
       } catch {
         alert("Could not load session — invalid file.");
       }
     };
+
     reader.readAsText(file);
     e.target.value = "";
   };
 
-  const [tool, setTool]           = useState("pointer");
-  const [color, setColor]         = useState("#1e1e1e");
+  const [tool, setTool] = useState("pointer");
+  const [color, setColor] = useState("#1e1e1e");
   const [eraserSize, setEraserSize] = useState(20);
-  const [zoom, setZoom]           = useState(1);
-  const [offset, setOffset]       = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [panelOpen, setPanelOpen] = useState(false);
-  const [darkMode, setDarkMode]   = useState(false);
-  const [textBox, setTextBox]     = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const [textBox, setTextBox] = useState(null);
   const [textValue, setTextValue] = useState("");
 
   // Selected image index
   const [selectedImg, setSelectedImg] = useState(-1);
   const selectedImgRef = useRef(-1);
 
-  const shapesRef    = useRef([]);
-  const historyRef   = useRef([[]]);
+  const shapesRef = useRef([]);
+  const historyRef = useRef([[]]);
   const redoStackRef = useRef([]);
 
-  const isDrawingRef      = useRef(false);
-  const currentShapeRef   = useRef(null);
-  const panStartRef       = useRef(null);
-  const offsetRef         = useRef({ x: 0, y: 0 });
-  const zoomRef           = useRef(1);
-  const darkModeRef       = useRef(false);
+  const isDrawingRef = useRef(false);
+  const currentShapeRef = useRef(null);
+  const panStartRef = useRef(null);
+  const offsetRef = useRef({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  const darkModeRef = useRef(false);
 
   // Image interaction state
   const imgActionRef = useRef(null);
   // { mode: "drag"|"resize", shapeIdx, handleIdx,
   //   startPos, origShape }
+  const [currentQuestion, setCurrentQuestion] = useState(null);
 
+  const [showCodeModal, setShowCodeModal] = useState(false);
+  const [timeComplexity, setTimeComplexity] = useState("");
+  const [codeValue, setCodeValue] = useState("");
+
+  const [codes, setCodes] = useState([]);
+  const [selectedCodeIdx, setSelectedCodeIdx] = useState(-1);
   // ── sync refs ──────────────────────────────────────────────────────────────
   useEffect(() => { offsetRef.current = offset; }, [offset]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
@@ -297,11 +354,11 @@ const ExcalidrawClone = () => {
   // ── canvas init ────────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
-    canvas.width  = window.innerWidth;
+    canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     ctxRef.current = canvas.getContext("2d");
     const onResize = () => {
-      canvas.width  = window.innerWidth;
+      canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
       repaint();
     };
@@ -353,11 +410,11 @@ const ExcalidrawClone = () => {
     reader.onload = (ev) => {
       loadImage(ev.target.result, (img) => {
         const canvas = canvasRef.current;
-        const cx = (canvas.width  / 2 - offsetRef.current.x) / zoomRef.current;
+        const cx = (canvas.width / 2 - offsetRef.current.x) / zoomRef.current;
         const cy = (canvas.height / 2 - offsetRef.current.y) / zoomRef.current;
         const maxW = 400;
         const scale = img.width > maxW ? maxW / img.width : 1;
-        const w = img.width  * scale;
+        const w = img.width * scale;
         const h = img.height * scale;
         saveHistory();
         const newIdx = shapesRef.current.length;
@@ -382,17 +439,17 @@ const ExcalidrawClone = () => {
     // 5 BL  6 BC  7 BR
     switch (handleIdx) {
       case 0: x += dx; y += dy; w -= dx; h -= dy; break; // TL
-      case 1:           y += dy;          h -= dy; break; // TC
-      case 2:           y += dy; w += dx; h -= dy; break; // TR
-      case 3: x += dx;           w -= dx;          break; // ML
-      case 4:                    w += dx;           break; // MR
-      case 5: x += dx;           w -= dx; h += dy; break; // BL
-      case 6:                              h += dy; break; // BC
-      case 7:                    w += dx;  h += dy; break; // BR
+      case 1: y += dy; h -= dy; break; // TC
+      case 2: y += dy; w += dx; h -= dy; break; // TR
+      case 3: x += dx; w -= dx; break; // ML
+      case 4: w += dx; break; // MR
+      case 5: x += dx; w -= dx; h += dy; break; // BL
+      case 6: h += dy; break; // BC
+      case 7: w += dx; h += dy; break; // BR
     }
     // keep minimum size
-    if (w < 10) { if ([0,3,5].includes(handleIdx)) x = orig.x + orig.w - 10; w = 10; }
-    if (h < 10) { if ([0,1,2].includes(handleIdx)) y = orig.y + orig.h - 10; h = 10; }
+    if (w < 10) { if ([0, 3, 5].includes(handleIdx)) x = orig.x + orig.w - 10; w = 10; }
+    if (h < 10) { if ([0, 1, 2].includes(handleIdx)) y = orig.y + orig.h - 10; h = 10; }
     return { x, y, w, h };
   };
 
@@ -594,19 +651,19 @@ const ExcalidrawClone = () => {
   const cursor = getCanvasCursor();
 
   const textScreenPos = textBox ? {
-    left:   textBox.x * zoom + offset.x,
-    top:    textBox.y * zoom + offset.y,
-    width:  Math.abs(textBox.w) * zoom,
+    left: textBox.x * zoom + offset.x,
+    top: textBox.y * zoom + offset.y,
+    width: Math.abs(textBox.w) * zoom,
     height: Math.abs(textBox.h) * zoom,
   } : null;
 
   const ui = {
-    bg:       darkMode ? "bg-[#1e1e2e]"     : "bg-white",
-    border:   darkMode ? "border-[#2e2e3e]" : "border-gray-200",
-    text:     darkMode ? "text-gray-100"    : "text-gray-700",
-    hover:    darkMode ? "hover:bg-[#2e2e3e]" : "hover:bg-gray-100",
+    bg: darkMode ? "bg-[#1e1e2e]" : "bg-white",
+    border: darkMode ? "border-[#2e2e3e]" : "border-gray-200",
+    text: darkMode ? "text-gray-100" : "text-gray-700",
+    hover: darkMode ? "hover:bg-[#2e2e3e]" : "hover:bg-gray-100",
     activeBg: darkMode ? "bg-[#3a3a5c] text-violet-300" : "bg-[#e0dfff] text-[#6965db]",
-    subText:  darkMode ? "text-gray-400"    : "text-gray-400",
+    subText: darkMode ? "text-gray-400" : "text-gray-400",
   };
 
   return (
@@ -617,17 +674,17 @@ const ExcalidrawClone = () => {
       <div className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 ${ui.bg} p-1 border ${ui.border} rounded-xl shadow-md z-50`}>
         <ToolButton icon={<Lock size={18} />} ui={ui} />
         <div className={`w-px h-6 ${darkMode ? "bg-[#2e2e3e]" : "bg-gray-200"} mx-1`} />
-        <ToolButton icon={<Hand size={18} />}          active={tool==="hand"}    onClick={() => setTool("hand")}    ui={ui} />
-        <ToolButton icon={<MousePointer2 size={18} />} active={tool==="pointer"} onClick={() => setTool("pointer")} ui={ui} />
-        <ToolButton icon={<Square size={18} />}        active={tool==="rect"}    onClick={() => setTool("rect")}    ui={ui} />
-        <ToolButton icon={<Diamond size={18} />}       active={tool==="diamond"} onClick={() => setTool("diamond")} ui={ui} />
-        <ToolButton icon={<Circle size={18} />}        active={tool==="circle"}  onClick={() => setTool("circle")}  ui={ui} />
-        <ToolButton icon={<ArrowRight size={18} />}    active={tool==="arrow"}   onClick={() => setTool("arrow")}   ui={ui} />
-        <ToolButton icon={<Minus size={18} />}         active={tool==="line"}    onClick={() => setTool("line")}    ui={ui} />
-        <ToolButton icon={<Pencil size={18} />}        active={tool==="pencil"}  onClick={() => setTool("pencil")}  ui={ui} />
-        <ToolButton icon={<Type size={18} />}          active={tool==="text"}    onClick={() => setTool("text")}    ui={ui} />
+        <ToolButton icon={<Hand size={18} />} active={tool === "hand"} onClick={() => setTool("hand")} ui={ui} />
+        <ToolButton icon={<MousePointer2 size={18} />} active={tool === "pointer"} onClick={() => setTool("pointer")} ui={ui} />
+        <ToolButton icon={<Square size={18} />} active={tool === "rect"} onClick={() => setTool("rect")} ui={ui} />
+        <ToolButton icon={<Diamond size={18} />} active={tool === "diamond"} onClick={() => setTool("diamond")} ui={ui} />
+        <ToolButton icon={<Circle size={18} />} active={tool === "circle"} onClick={() => setTool("circle")} ui={ui} />
+        <ToolButton icon={<ArrowRight size={18} />} active={tool === "arrow"} onClick={() => setTool("arrow")} ui={ui} />
+        <ToolButton icon={<Minus size={18} />} active={tool === "line"} onClick={() => setTool("line")} ui={ui} />
+        <ToolButton icon={<Pencil size={18} />} active={tool === "pencil"} onClick={() => setTool("pencil")} ui={ui} />
+        <ToolButton icon={<Type size={18} />} active={tool === "text"} onClick={() => setTool("text")} ui={ui} />
         <ToolButton icon={<ImageIcon size={18} />} ui={ui} />
-        <ToolButton icon={<Eraser size={18} />}        active={tool==="eraser"}  onClick={() => setTool("eraser")}  ui={ui} />
+        <ToolButton icon={<Eraser size={18} />} active={tool === "eraser"} onClick={() => setTool("eraser")} ui={ui} />
       </div>
 
       {/* ── DARK MODE TOGGLE ── */}
@@ -636,6 +693,45 @@ const ExcalidrawClone = () => {
         title={darkMode ? "Light mode" : "Dark mode"}>
         {darkMode ? <Sun size={18} /> : <Moon size={18} />}
       </button>
+
+      <div className={`absolute top-16 right-4 w-64 max-h-[300px] overflow-y-auto ${ui.bg} border ${ui.border} rounded-xl shadow-lg p-3 z-40`}>
+
+        <p className={`text-xs font-semibold ${ui.subText} mb-2 uppercase tracking-wider`}>
+          Saved Codes
+        </p>
+
+        {codes.length === 0 && (
+          <p className="text-xs text-gray-400">No code saved</p>
+        )}
+
+        {codes.map((c, idx) => (
+          <div
+            key={idx}
+            className={`flex items-center justify-between px-2 py-2 rounded-md mb-1 cursor-pointer ${ui.hover}`}
+            onClick={() => {
+              setSelectedCodeIdx(idx);
+              setTimeComplexity(c.time);
+              setCodeValue(c.code);
+              setShowCodeModal(true);
+            }}
+          >
+            <span className="text-sm truncate">
+              {c.time || "No complexity"}
+            </span>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setCodes(prev => prev.filter((_, i) => i !== idx));
+              }}
+              className="text-red-400 text-xs px-2"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+
+      </div>
 
       {/* ── LEETCODE TOGGLE ── */}
       <button onClick={() => setPanelOpen(!panelOpen)}
@@ -647,7 +743,7 @@ const ExcalidrawClone = () => {
       <div className={`absolute top-24 left-4 w-56 ${ui.bg} border ${ui.border} rounded-xl shadow-lg p-4 z-40`}>
         <p className={`text-xs font-semibold ${ui.subText} mb-2 uppercase tracking-wider`}>Stroke</p>
         <div className="flex gap-2 flex-wrap">
-          {["#1e1e1e","#ffffff","#e03131","#2f9e41","#1971c2","#f08c00","#9c36b5","#f06595"].map(c => (
+          {["#1e1e1e", "#ffffff", "#e03131", "#2f9e41", "#1971c2", "#f08c00", "#9c36b5", "#f06595"].map(c => (
             <div key={c} onClick={() => setColor(c)}
               className="w-6 h-6 rounded-full border-2 cursor-pointer transition-transform hover:scale-110"
               style={{ backgroundColor: c, borderColor: color === c ? "#6965db" : "transparent" }} />
@@ -690,6 +786,79 @@ const ExcalidrawClone = () => {
         onWheel={onWheel}
       />
 
+      {showCodeModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[100]">
+
+          <div className={`w-[500px] max-w-[90%] ${ui.bg} border ${ui.border} rounded-xl shadow-xl p-5`}>
+
+            <h2 className="text-lg font-semibold mb-4">Add Solution Code</h2>
+
+            {/* Time Complexity */}
+            <div className="mb-3">
+              <label className="text-sm mb-1 block">Time Complexity</label>
+              <input
+                type="text"
+                placeholder="e.g. O(n log n)"
+                value={timeComplexity}
+                onChange={(e) => setTimeComplexity(e.target.value)}
+                className={`w-full px-3 py-2 rounded-md border ${ui.border} ${ui.bg} ${ui.text}`}
+              />
+            </div>
+
+            {/* Code */}
+            <div className="mb-4">
+              <label className="text-sm mb-1 block">Code</label>
+              <textarea
+                placeholder="// Write your solution here..."
+                value={codeValue}
+                onChange={(e) => setCodeValue(e.target.value)}
+                className={`w-full h-40 px-3 py-2 rounded-md border ${ui.border} ${ui.bg} ${ui.text} font-mono text-sm`}
+              />
+            </div>
+
+            {/* Buttons */}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowCodeModal(false)}
+                className="px-3 py-1.5 text-sm rounded-md border"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={() => {
+                  if (!timeComplexity && !codeValue) return;
+
+                  if (selectedCodeIdx !== -1) {
+                    // update existing
+                    const updated = [...codes];
+                    updated[selectedCodeIdx] = {
+                      time: timeComplexity,
+                      code: codeValue,
+                    };
+                    setCodes(updated);
+                  } else {
+                    // add new
+                    setCodes(prev => [
+                      ...prev,
+                      { time: timeComplexity, code: codeValue }
+                    ]);
+                  }
+
+                  // reset
+                  setSelectedCodeIdx(-1);
+                  setTimeComplexity("");
+                  setCodeValue("");
+                  setShowCodeModal(false);
+                }}
+                className="px-3 py-1.5 text-sm rounded-md bg-violet-500 text-white"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ── TEXT OVERLAY ── */}
       {textBox && textScreenPos && (
         <textarea autoFocus value={textValue}
@@ -713,7 +882,7 @@ const ExcalidrawClone = () => {
       <div className={`absolute bottom-4 left-4 flex gap-1 items-center ${ui.bg} px-2 py-1 rounded-lg border ${ui.border} shadow-sm z-50 ${ui.text}`}>
         <button onClick={() => applyZoom(-0.1)} className={`p-1.5 ${ui.hover} rounded-md`}><MinusIcon size={15} /></button>
         <span className="text-sm font-medium px-2 tabular-nums">{Math.round(zoom * 100)}%</span>
-        <button onClick={() => applyZoom(0.1)}  className={`p-1.5 ${ui.hover} rounded-md`}><Plus size={15} /></button>
+        <button onClick={() => applyZoom(0.1)} className={`p-1.5 ${ui.hover} rounded-md`}><Plus size={15} /></button>
       </div>
 
       {/* ── IMAGE UPLOAD (hidden input) ── */}
@@ -728,14 +897,26 @@ const ExcalidrawClone = () => {
           <button onClick={redo} className={`p-2 ${ui.hover} rounded-r-lg`}><Redo2 size={16} /></button>
         </div>
         <LabelButton icon={<ImagePlus size={16} />} label="Upload Image" onClick={() => fileInputRef.current.click()} ui={ui} title="Upload image" />
-        <LabelButton icon={<Download size={16} />}  label="Save"         onClick={saveSession}                          ui={ui} title="Save session" />
-        <LabelButton icon={<Upload size={16} />}    label="Load"         onClick={() => loadInputRef.current.click()}   ui={ui} title="Load session" />
+        <LabelButton
+          icon={<Code size={16} />}
+          label="Upload Code"
+          onClick={() => setShowCodeModal(true)}
+          ui={ui}
+          title="Add code"
+        />
+        <LabelButton icon={<Download size={16} />} label="Save" onClick={saveSession} ui={ui} title="Save session" />
+        <LabelButton icon={<Upload size={16} />} label="Load" onClick={() => loadInputRef.current.click()} ui={ui} title="Load session" />
         <button className={`p-2 ${ui.bg} border ${ui.border} rounded-full shadow-sm ${ui.hover} ${ui.text}`}>
           <HelpCircle size={20} />
         </button>
       </div>
 
-      <LeetCodePanel isOpen={panelOpen} onClose={() => setPanelOpen(false)} />
+      <LeetCodePanel
+        isOpen={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        onQuestionChange={setCurrentQuestion}
+        restoredQuestion={currentQuestion}
+      />
     </div>
   );
 };

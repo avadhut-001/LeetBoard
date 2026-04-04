@@ -79,7 +79,7 @@ const fetchSlugByNumber = async (num) => {
 
 const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) => {
   const [query, setQuery]       = useState("");
-  const [question, setQuestion] = useState(restoredQuestion ?? null);
+  const [question, setQuestion] = useState(null);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
 
@@ -117,7 +117,7 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
       };
       setQuestion(newQuestion);
       // notify parent so it can save id+title for filename
-      onQuestionChange?.({ id: newQuestion.id, title: newQuestion.title });
+      onQuestionChange?.(newQuestion);
     } catch (err) {
       setError('Problem not found. Try the exact name (e.g. "two sum") or number (e.g. "1").');
     }
@@ -211,7 +211,7 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
               </span>
             )}
 
-            {question.topics.length > 0 && (
+            {question?.topics?.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-5">
                 {question.topics.map((t, i) => (
                   <span key={i} className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-md bg-[#252525] text-gray-400 border border-[#333]">
@@ -224,11 +224,11 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
             {/* Description — raw LeetCode HTML */}
             <div
               className="lc-content text-sm text-gray-300 leading-relaxed"
-              dangerouslySetInnerHTML={{ __html: question.content }}
+              dangerouslySetInnerHTML={{  __html: question?.content || ""  }}
             />
 
             {/* Hints */}
-            {question.hints.length > 0 && (
+            {question?.hints?.length > 0 && (
               <div className="mt-6">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Hints</p>
                 {question.hints.map((h, i) => (
