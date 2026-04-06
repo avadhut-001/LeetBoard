@@ -207,42 +207,45 @@ const ExcalidrawClone = () => {
   const loadInputRef = useRef(null);
 
   // ── save session ──────────────────────────────────────────────────────────
-  const saveSession = () => {
-    const exportShapes = shapesRef.current.map(s => ({ ...s }));
-
+  const saveToBackend = async () => {
     const session = {
-      version: 1,
-      shapes: exportShapes,
-      offset: offsetRef.current,
-      zoom: zoomRef.current,
-      darkMode: darkModeRef.current,
-
-      codes: codes,
+      shapes: shapesRef.current,
+      codes,
       question: currentQuestion,
+      offset,
+      zoom,
+      darkMode,
     };
 
-    const blob = new Blob([JSON.stringify(session, null, 2)], {
-      type: "application/json",
+    const res = await fetch("http://localhost:5000/api/session", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(session),
     });
 
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    let fileName = "drawing-session.json";
+    const data = await res.json();
 
-    if (currentQuestion) {
-      const safeTitle = currentQuestion.title
-        .replace(/[^\w\s]/gi, "")   // remove special chars
-        .replace(/\s+/g, "-");      // spaces → dash
+    const url = `${window.location.origin}/session/${data.id}`;
+    navigator.clipboard.writeText(url);
 
-      fileName = `${currentQuestion.id}-${safeTitle}.json`;
-    }
-
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
+    alert("Session saved! Link copied ✅");
   };
+  const loadByQuestionId = async (qid) => {
+    const res = await fetch(`http://localhost:5000/api/session/question/${qid}`);
+    const session = await res.json();
 
+    shapesRef.current = session.shapes;
+    setCodes(session.codes);
+    setCurrentQuestion(session.question);
+
+    setOffset(session.offset || { x: 0, y: 0 });
+    setZoom(session.zoom || 1);
+    setDarkMode(session.darkMode || false);
+
+    repaint();
+  };
   // ── load session ──────────────────────────────────────────────────────────
   const handleLoadSession = (e) => {
     const file = e.target.files[0];
@@ -308,6 +311,27 @@ const ExcalidrawClone = () => {
     e.target.value = "";
   };
 
+
+  const handleLoadByQid = async () => {
+    if (!loadQid) return;
+
+    try {
+      const res = await fetch(
+        `http://localhost:5000/api/session/question/${loadQid}`
+      );
+
+      if (!res.ok) {
+        setLoadError("No data found for this question.");
+        return;
+      }
+
+      // ✅ redirect to page
+      window.location.href = `/session/${loadQid}`;
+
+    } catch (err) {
+      setLoadError("Something went wrong.");
+    }
+  };
   const [tool, setTool] = useState("pointer");
   const [color, setColor] = useState("#1e1e1e");
   const [eraserSize, setEraserSize] = useState(20);
@@ -345,6 +369,10 @@ const ExcalidrawClone = () => {
 
   const [codes, setCodes] = useState([]);
   const [selectedCodeIdx, setSelectedCodeIdx] = useState(-1);
+
+  const [showLoadInput, setShowLoadInput] = useState(false);
+  const [loadQid, setLoadQid] = useState("");
+  const [loadError, setLoadError] = useState("");
   // ── sync refs ──────────────────────────────────────────────────────────────
   useEffect(() => { offsetRef.current = offset; }, [offset]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
@@ -366,6 +394,17 @@ const ExcalidrawClone = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+
+  useEffect(() => {
+    const path = window.location.pathname;
+
+    if (path.startsWith("/session/")) {
+      const qid = path.split("/")[2];
+      if (qid) {
+        loadByQuestionId(qid);
+      }
+    }
+  }, []);
   // ── repaint ────────────────────────────────────────────────────────────────
   const repaint = useCallback(() => {
     const canvas = canvasRef.current;
@@ -904,8 +943,48 @@ const ExcalidrawClone = () => {
           ui={ui}
           title="Add code"
         />
-        <LabelButton icon={<Download size={16} />} label="Save" onClick={saveSession} ui={ui} title="Save session" />
-        <LabelButton icon={<Upload size={16} />} label="Load" onClick={() => loadInputRef.current.click()} ui={ui} title="Load session" />
+        <LabelButton icon={<Download size={16} />} label="Save" onClick={saveToBackend} ui={ui} title="Save session" />
+        <LabelButton
+          label="Load"
+          onClick={() => setShowLoadInput(true)}
+          ui={ui}
+        />
+
+        {showLoadInput && (
+          <div className={`absolute bottom-16 right-4 ${ui.bg} border ${ui.border} rounded-lg p-3 shadow-md z-50`}>
+
+            <input
+              type="number"
+              placeholder="Enter question number"
+              value={loadQid}
+              onChange={(e) => setLoadQid(e.target.value)}
+              className={`px-2 py-1 border rounded-md text-sm ${ui.bg} ${ui.text}`}
+            />
+
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={handleLoadByQid}
+                className="px-2 py-1 bg-violet-500 text-white text-sm rounded"
+              >
+                Load
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowLoadInput(false);
+                  setLoadError("");
+                }}
+                className="px-2 py-1 text-sm border rounded"
+              >
+                Cancel
+              </button>
+            </div>
+
+            {loadError && (
+              <p className="text-red-500 text-xs mt-2">{loadError}</p>
+            )}
+          </div>
+        )}
         <button className={`p-2 ${ui.bg} border ${ui.border} rounded-full shadow-sm ${ui.hover} ${ui.text}`}>
           <HelpCircle size={20} />
         </button>
