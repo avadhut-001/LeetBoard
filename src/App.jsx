@@ -1,11 +1,12 @@
-import React from 'react'
-import Draw from "./components/Draw"
+import React from "react";
+import Draw from "./components/Draw";
+
 function App() {
   return (
-    <div >
+    <div>
       <Draw />
     </div>
-  )
+  );
 }
 
-export default App
+export default App;

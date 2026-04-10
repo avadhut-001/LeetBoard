@@ -1,205 +1,26 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import LeetCodePanel from "../components/LeetCodePanel";
-import ToolButton, { LabelButton } from "../components/ToolButton";
-import { Code, Moon, Sun, ImagePlus, Download, Upload } from "lucide-react";
+import { Code, Moon, Sun, ImagePlus, Download } from "lucide-react";
 import {
   Hand, MousePointer2, Square, Diamond, Circle,
   ArrowRight, Minus, Pencil, Type, Image as ImageIcon,
   Eraser, Plus, Minus as MinusIcon,
-  Undo2, Redo2, HelpCircle, Lock
+  Undo2, Redo2, HelpCircle, Lock,
 } from "lucide-react";
 
-// ─── image cache ─────────────────────────────────────────────────────────────
-const imageCache = new Map();
-const loadImage = (src, onReady) => {
-  if (imageCache.has(src)) { onReady(imageCache.get(src)); return; }
-  const img = new Image();
-  img.onload = () => { imageCache.set(src, img); onReady(img); };
-  img.src = src;
-};
+import { loadImage } from "./Imagecache";
+import { screenToCanvas, hitHandle, hitImage, applyResize } from "./Canvashelpers";
+import { redrawAll } from "./Redrawall";
+import { drawShape } from "./Drawshape";
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-const screenToCanvas = (sx, sy, offset, zoom) => ({
-  x: (sx - offset.x) / zoom,
-  y: (sy - offset.y) / zoom,
-});
+import ToolButton, { LabelButton } from "./ToolButton";
+import LeetCodePanel from "./LeetCodePanel";
+import CodeModal from "./CodeModal";
+import CodesPanel from "./CodesPanel";
 
-// Returns which resize handle (0-7) the point hits, or -1
-// Handles: 0=TL 1=TC 2=TR 3=ML 4=MR 5=BL 6=BC 7=BR
-const HANDLE_SIZE = 8; // canvas units
-const getHandles = (shape) => {
-  const { x, y, w, h } = shape;
-  return [
-    { x: x, y: y }, // 0 TL
-    { x: x + w / 2, y: y }, // 1 TC
-    { x: x + w, y: y }, // 2 TR
-    { x: x, y: y + h / 2 }, // 3 ML
-    { x: x + w, y: y + h / 2 }, // 4 MR
-    { x: x, y: y + h }, // 5 BL
-    { x: x + w / 2, y: y + h }, // 6 BC
-    { x: x + w, y: y + h }, // 7 BR
-  ];
-};
-
-const hitHandle = (shape, pos, zoom) => {
-  const hs = HANDLE_SIZE / zoom;
-  const handles = getHandles(shape);
-  for (let i = 0; i < handles.length; i++) {
-    const h = handles[i];
-    if (Math.abs(pos.x - h.x) <= hs && Math.abs(pos.y - h.y) <= hs) return i;
-  }
-  return -1;
-};
-
-const hitImage = (shape, pos) =>
-  pos.x >= shape.x && pos.x <= shape.x + shape.w &&
-  pos.y >= shape.y && pos.y <= shape.y + shape.h;
-
-const HANDLE_CURSORS = [
-  "nw-resize", "n-resize", "ne-resize",
-  "w-resize", "e-resize",
-  "sw-resize", "s-resize", "se-resize",
-];
-
-// ─── shape renderer ───────────────────────────────────────────────────────────
-const drawShape = (ctx, shape) => {
-  ctx.save();
-  ctx.strokeStyle = shape.color;
-  ctx.lineWidth = shape.lineWidth ?? 3;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.globalCompositeOperation = "source-over";
-
-  switch (shape.type) {
-    case "rect":
-      ctx.strokeRect(shape.x, shape.y, shape.w, shape.h);
-      break;
-    case "circle": {
-      const r = Math.hypot(shape.w, shape.h);
-      ctx.beginPath();
-      ctx.arc(shape.x, shape.y, r, 0, Math.PI * 2);
-      ctx.stroke();
-      break;
-    }
-    case "diamond": {
-      const cx = shape.x + shape.w / 2, cy = shape.y + shape.h / 2;
-      ctx.beginPath();
-      ctx.moveTo(cx, shape.y);
-      ctx.lineTo(shape.x + shape.w, cy);
-      ctx.lineTo(cx, shape.y + shape.h);
-      ctx.lineTo(shape.x, cy);
-      ctx.closePath();
-      ctx.stroke();
-      break;
-    }
-    case "line":
-      ctx.beginPath();
-      ctx.moveTo(shape.x, shape.y);
-      ctx.lineTo(shape.x + shape.w, shape.y + shape.h);
-      ctx.stroke();
-      break;
-    case "arrow": {
-      const ex = shape.x + shape.w, ey = shape.y + shape.h;
-      const angle = Math.atan2(shape.h, shape.w);
-      const hl = 14;
-      ctx.beginPath();
-      ctx.moveTo(shape.x, shape.y);
-      ctx.lineTo(ex, ey);
-      ctx.lineTo(ex - hl * Math.cos(angle - Math.PI / 6), ey - hl * Math.sin(angle - Math.PI / 6));
-      ctx.moveTo(ex, ey);
-      ctx.lineTo(ex - hl * Math.cos(angle + Math.PI / 6), ey - hl * Math.sin(angle + Math.PI / 6));
-      ctx.stroke();
-      break;
-    }
-    case "pencil":
-      if (!shape.points || shape.points.length < 2) break;
-      ctx.beginPath();
-      ctx.moveTo(shape.points[0].x, shape.points[0].y);
-      shape.points.forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.stroke();
-      break;
-    case "eraser":
-      if (!shape.points || shape.points.length < 2) break;
-      ctx.save();
-      ctx.globalCompositeOperation = "destination-out";
-      ctx.lineWidth = shape.eraserSize ?? 20;
-      ctx.beginPath();
-      ctx.moveTo(shape.points[0].x, shape.points[0].y);
-      shape.points.forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.stroke();
-      ctx.restore();
-      break;
-    case "image":
-      if (imageCache.has(shape.src))
-        ctx.drawImage(imageCache.get(shape.src), shape.x, shape.y, shape.w, shape.h);
-      break;
-    case "text":
-      ctx.fillStyle = shape.color;
-      ctx.font = `${shape.fontSize ?? 18}px 'Segoe UI', sans-serif`;
-      (shape.text ?? "").split("\n").forEach((line, i) =>
-        ctx.fillText(line, shape.x, shape.y + (i + 1) * (shape.fontSize ?? 18) * 1.3)
-      );
-      break;
-    case "code": {
-      ctx.fillStyle = "#fff";
-      ctx.strokeStyle = "#6965db";
-      ctx.lineWidth = 2;
-
-      // box
-      ctx.fillRect(shape.x, shape.y, shape.w, shape.h);
-      ctx.strokeRect(shape.x, shape.y, shape.w, shape.h);
-
-      // text
-      ctx.fillStyle = "#000";
-      ctx.font = "14px sans-serif";
-
-      const text = shape.time || "Code";
-      ctx.fillText(text, shape.x + 8, shape.y + 20);
-      break;
-    }
-    default: break;
-  }
-  ctx.restore();
-};
-
-// Draw selection box + handles around selected image
-const drawSelection = (ctx, shape, zoom) => {
-  ctx.save();
-  ctx.strokeStyle = "#6965db";
-  ctx.lineWidth = 1.5 / zoom;
-  ctx.setLineDash([4 / zoom, 3 / zoom]);
-  ctx.strokeRect(shape.x, shape.y, shape.w, shape.h);
-  ctx.setLineDash([]);
-
-  const hs = HANDLE_SIZE / zoom;
-  getHandles(shape).forEach(h => {
-    ctx.fillStyle = "#fff";
-    ctx.strokeStyle = "#6965db";
-    ctx.lineWidth = 1.5 / zoom;
-    ctx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
-    ctx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
-  });
-  ctx.restore();
-};
-
-// ─── full redraw ──────────────────────────────────────────────────────────────
-const redrawAll = (canvas, ctx, shapes, offset, zoom, darkMode, selectedIdx) => {
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (darkMode) { ctx.fillStyle = "#1a1a2e"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
-  ctx.restore();
-
-  ctx.save();
-  ctx.setTransform(zoom, 0, 0, zoom, offset.x, offset.y);
-  shapes.forEach((s, i) => {
-    drawShape(ctx, s);
-    if (s.type === "image" && i === selectedIdx) drawSelection(ctx, s, zoom);
-  });
-  ctx.restore();
-};
-
-// ─── component ───────────────────────────────────────────────────────────────
+const BASE_URL =
+  window.location.hostname === "localhost"
+    ? "http://localhost:5000"
+    : "";
 const ExcalidrawClone = () => {
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
@@ -217,35 +38,69 @@ const ExcalidrawClone = () => {
       darkMode,
     };
 
-    const res = await fetch("http://localhost:5000/api/session", {
+    const BASE_URL =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5000"
+        : "";
+
+    const res = await fetch(`${BASE_URL}/api/session`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(session),
     });
 
+    if (!res.ok) {
+      const err = await res.text();
+      console.error("Save failed:", err);
+      alert("❌ Save failed");
+      return;
+    }
+
     const data = await res.json();
+
+    console.log("Saved ID:", data.id);
+
 
     const url = `${window.location.origin}/session/${data.id}`;
     navigator.clipboard.writeText(url);
-
     alert("Session saved! Link copied ✅");
   };
+
   const loadByQuestionId = async (qid) => {
-    const res = await fetch(`http://localhost:5000/api/session/question/${qid}`);
+    const res = await fetch(`${BASE_URL}/api/session/question/${qid}`);
     const session = await res.json();
 
-    shapesRef.current = session.shapes;
+
     setCodes(session.codes);
     setCurrentQuestion(session.question);
-
     setOffset(session.offset || { x: 0, y: 0 });
     setZoom(session.zoom || 1);
     setDarkMode(session.darkMode || false);
 
-    repaint();
+    const imagesToLoad = session.shapes.filter(s => s.type === "image");
+
+    let loaded = 0;
+
+    const afterLoad = () => {
+      shapesRef.current = session.shapes;
+      repaint();
+    };
+
+    if (imagesToLoad.length === 0) {
+      afterLoad();
+      return;
+    }
+
+    imagesToLoad.forEach((s) => {
+      loadImage(s.src, () => {
+        loaded++;
+        if (loaded === imagesToLoad.length) {
+          afterLoad();
+        }
+      });
+    });
   };
+
   // ── load session ──────────────────────────────────────────────────────────
   const handleLoadSession = (e) => {
     const file = e.target.files[0];
@@ -256,12 +111,11 @@ const ExcalidrawClone = () => {
       try {
         const session = JSON.parse(ev.target.result);
         if (!session.shapes) throw new Error("Invalid file");
-        if (session.codes) {
-          setCodes(session.codes);
-        }
-        const imagesToLoad = session.shapes.filter(s => s.type === "image");
+        if (session.codes) setCodes(session.codes);
 
+        const imagesToLoad = session.shapes.filter(s => s.type === "image");
         let loaded = 0;
+
         const afterLoad = () => {
           shapesRef.current = session.shapes;
           historyRef.current = [[], [...session.shapes]];
@@ -272,7 +126,6 @@ const ExcalidrawClone = () => {
 
           offsetRef.current = newOffset;
           zoomRef.current = newZoom;
-
           setOffset(newOffset);
           setZoom(newZoom);
 
@@ -281,19 +134,13 @@ const ExcalidrawClone = () => {
             setDarkMode(session.darkMode);
           }
 
-          // ✅ RESTORE QUESTION
-          if (session.question) {
-            setCurrentQuestion(session.question);
-          }
+          if (session.question) setCurrentQuestion(session.question);
 
           setSelectedImg(-1);
           repaint();
         };
 
-        if (imagesToLoad.length === 0) {
-          afterLoad();
-          return;
-        }
+        if (imagesToLoad.length === 0) { afterLoad(); return; }
 
         imagesToLoad.forEach(s => {
           loadImage(s.src, () => {
@@ -311,38 +158,63 @@ const ExcalidrawClone = () => {
     e.target.value = "";
   };
 
+  const handleDoubleClick = (e) => {
+    const pos = getCanvasPos(e);
+
+    for (let i = shapesRef.current.length - 1; i >= 0; i--) {
+      const s = shapesRef.current[i];
+
+      if (s.type === "text") {
+        const width = s.width || 100;
+        const height = s.height || 20;
+
+        if (
+          pos.x >= s.x &&
+          pos.x <= s.x + width &&
+          pos.y >= s.y &&
+          pos.y <= s.y + height
+        ) {
+          // 🔥 Open textarea for editing
+          setTextBox({
+            x: s.x,
+            y: s.y,
+            w: width,
+            h: height,
+          });
+
+          setTextValue(s.text);
+
+          // 🔥 REMOVE old text (important)
+          shapesRef.current.splice(i, 1);
+
+          repaint();
+          return;
+        }
+      }
+    }
+  };
 
   const handleLoadByQid = async () => {
     if (!loadQid) return;
-
     try {
-      const res = await fetch(
-        `http://localhost:5000/api/session/question/${loadQid}`
-      );
-
-      if (!res.ok) {
-        setLoadError("No data found for this question.");
-        return;
-      }
-
-      // ✅ redirect to page
+      const res = await fetch(`${BASE_URL}/api/session/question/${loadQid}`);
+      if (!res.ok) { setLoadError("No data found for this question."); return; }
       window.location.href = `/session/${loadQid}`;
-
     } catch (err) {
       setLoadError("Something went wrong.");
     }
   };
+
   const [tool, setTool] = useState("pointer");
-  const [color, setColor] = useState("#1e1e1e");
+  const [color, setColor] = useState("#ffffff");
   const [eraserSize, setEraserSize] = useState(20);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [panelOpen, setPanelOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(true);
   const [textBox, setTextBox] = useState(null);
   const [textValue, setTextValue] = useState("");
 
-  // Selected image index
   const [selectedImg, setSelectedImg] = useState(-1);
   const selectedImgRef = useRef(-1);
 
@@ -355,28 +227,34 @@ const ExcalidrawClone = () => {
   const panStartRef = useRef(null);
   const offsetRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
-  const darkModeRef = useRef(false);
+  const darkModeRef = useRef(true);
 
-  // Image interaction state
   const imgActionRef = useRef(null);
-  // { mode: "drag"|"resize", shapeIdx, handleIdx,
-  //   startPos, origShape }
-  const [currentQuestion, setCurrentQuestion] = useState(null);
 
+  const [currentQuestion, setCurrentQuestion] = useState(null);
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [timeComplexity, setTimeComplexity] = useState("");
   const [codeValue, setCodeValue] = useState("");
-
   const [codes, setCodes] = useState([]);
   const [selectedCodeIdx, setSelectedCodeIdx] = useState(-1);
 
   const [showLoadInput, setShowLoadInput] = useState(false);
   const [loadQid, setLoadQid] = useState("");
   const [loadError, setLoadError] = useState("");
+
+
+  const [fontSize, setFontSize] = useState(18);
   // ── sync refs ──────────────────────────────────────────────────────────────
   useEffect(() => { offsetRef.current = offset; }, [offset]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
-  useEffect(() => { darkModeRef.current = darkMode; repaint(); }, [darkMode]);
+  useEffect(() => {
+    darkModeRef.current = darkMode;
+
+    // 🔥 auto switch pencil color
+    setColor(darkMode ? "#ffffff" : "#1e1e1e");
+
+    repaint();
+  }, [darkMode]);
   useEffect(() => { selectedImgRef.current = selectedImg; }, [selectedImg]);
 
   // ── canvas init ────────────────────────────────────────────────────────────
@@ -394,22 +272,24 @@ const ExcalidrawClone = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-
   useEffect(() => {
     const path = window.location.pathname;
-
     if (path.startsWith("/session/")) {
       const qid = path.split("/")[2];
-      if (qid) {
-        loadByQuestionId(qid);
-      }
+      if (qid) loadByQuestionId(qid);
     }
   }, []);
+
   // ── repaint ────────────────────────────────────────────────────────────────
   const repaint = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !ctxRef.current) return;
-    redrawAll(canvas, ctxRef.current, shapesRef.current,
+    const filteredShapes = shapesRef.current.filter(s => {
+      if (!currentQuestion) return true;
+      return !s.questionId || s.questionId === currentQuestion?.id || s.questionId === currentQuestion;
+    });
+
+    redrawAll(canvas, ctxRef.current, filteredShapes,
       offsetRef.current, zoomRef.current, darkModeRef.current, selectedImgRef.current);
   }, []);
 
@@ -459,7 +339,15 @@ const ExcalidrawClone = () => {
         const newIdx = shapesRef.current.length;
         shapesRef.current = [
           ...shapesRef.current,
-          { type: "image", x: cx - w / 2, y: cy - h / 2, w, h, src: ev.target.result },
+          {
+            type: "image",
+            x: cx - w / 2,
+            y: cy - h / 2,
+            w,
+            h,
+            src: ev.target.result,
+            questionId: currentQuestion?.id || currentQuestion // 🔥 ADD THIS
+          },
         ];
         setSelectedImg(newIdx);
         repaint();
@@ -469,42 +357,16 @@ const ExcalidrawClone = () => {
     e.target.value = "";
   };
 
-  // ── apply resize delta from handle drag ───────────────────────────────────
-  const applyResize = (orig, handleIdx, dx, dy) => {
-    let { x, y, w, h } = orig;
-    // handle index layout:
-    // 0 TL  1 TC  2 TR
-    // 3 ML        4 MR
-    // 5 BL  6 BC  7 BR
-    switch (handleIdx) {
-      case 0: x += dx; y += dy; w -= dx; h -= dy; break; // TL
-      case 1: y += dy; h -= dy; break; // TC
-      case 2: y += dy; w += dx; h -= dy; break; // TR
-      case 3: x += dx; w -= dx; break; // ML
-      case 4: w += dx; break; // MR
-      case 5: x += dx; w -= dx; h += dy; break; // BL
-      case 6: h += dy; break; // BC
-      case 7: w += dx; h += dy; break; // BR
-    }
-    // keep minimum size
-    if (w < 10) { if ([0, 3, 5].includes(handleIdx)) x = orig.x + orig.w - 10; w = 10; }
-    if (h < 10) { if ([0, 1, 2].includes(handleIdx)) y = orig.y + orig.h - 10; h = 10; }
-    return { x, y, w, h };
-  };
-
   // ── pointer down ──────────────────────────────────────────────────────────
   const onMouseDown = (e) => {
     const pos = getCanvasPos(e);
 
-    // ── hand tool pan ──
     if (tool === "hand") {
       panStartRef.current = { mx: e.clientX, my: e.clientY, ox: offsetRef.current.x, oy: offsetRef.current.y };
       return;
     }
 
-    // ── pointer tool: check image interaction ──
     if (tool === "pointer") {
-      // check selected image handles first
       const selIdx = selectedImgRef.current;
       if (selIdx !== -1 && shapesRef.current[selIdx]) {
         const shape = shapesRef.current[selIdx];
@@ -518,45 +380,69 @@ const ExcalidrawClone = () => {
           return;
         }
       }
-      // check all images for click-to-select
       for (let i = shapesRef.current.length - 1; i >= 0; i--) {
         const s = shapesRef.current[i];
+
+        // 🖼 IMAGE
         if (s.type === "image" && hitImage(s, pos)) {
           setSelectedImg(i);
-          imgActionRef.current = { mode: "drag", shapeIdx: i, startPos: pos, origShape: { ...s } };
+
+          imgActionRef.current = {
+            mode: "drag",
+            shapeIdx: i,
+            startPos: pos,
+            origShape: { ...s },
+          };
           return;
         }
+
+        // 📝 TEXT
+        if (s.type === "text") {
+          const width = s.width || 100;
+          const height = s.height || 20;
+
+          if (
+            pos.x >= s.x &&
+            pos.x <= s.x + width &&
+            pos.y >= s.y &&
+            pos.y <= s.y + height
+          ) {
+            setSelectedImg(i); // reuse same selection
+
+            imgActionRef.current = {
+              mode: "drag",
+              shapeIdx: i,
+              startPos: pos,
+              origShape: { ...s },
+            };
+            return;
+          }
+        }
       }
-      // clicked empty space — deselect
       setSelectedImg(-1);
       return;
     }
 
-    // ── deselect image when using drawing tools ──
     setSelectedImg(-1);
 
-    // ── text tool ──
     if (tool === "text") {
       currentShapeRef.current = { type: "textbox", x: pos.x, y: pos.y, w: 0, h: 0 };
       isDrawingRef.current = true;
       return;
     }
 
-    // ── freehand tools ──
     if (tool === "pencil" || tool === "eraser") {
       currentShapeRef.current = { type: tool, color, lineWidth: 3, eraserSize, points: [pos] };
       isDrawingRef.current = true;
       return;
     }
 
-    // ── shape tools ──
     currentShapeRef.current = { type: tool, x: pos.x, y: pos.y, w: 0, h: 0, color, lineWidth: 3 };
     isDrawingRef.current = true;
   };
 
   // ── pointer move ──────────────────────────────────────────────────────────
   const onMouseMove = (e) => {
-    // pan
     if (tool === "hand" && panStartRef.current) {
       const dx = e.clientX - panStartRef.current.mx;
       const dy = e.clientY - panStartRef.current.my;
@@ -566,7 +452,6 @@ const ExcalidrawClone = () => {
       return;
     }
 
-    // image drag / resize
     if (imgActionRef.current) {
       const pos = getCanvasPos(e);
       const { mode, shapeIdx, handleIdx, startPos, origShape } = imgActionRef.current;
@@ -584,7 +469,38 @@ const ExcalidrawClone = () => {
       repaint();
       return;
     }
+    // 🔥 ERASER FOR TEXT + IMAGE (ADD HERE)
+    if (tool === "eraser") {
+      const pos = getCanvasPos(e);
 
+      saveHistory();
+
+      shapesRef.current = shapesRef.current.filter((s) => {
+        // 📝 TEXT
+        if (s.type === "text") {
+          return !(
+            pos.x >= s.x &&
+            pos.x <= s.x + (s.width || 100) &&
+            pos.y >= s.y &&
+            pos.y <= s.y + (s.height || 20)
+          );
+        }
+
+        // 🖼 IMAGE
+        if (s.type === "image") {
+          return !(
+            pos.x >= s.x &&
+            pos.x <= s.x + s.w &&
+            pos.y >= s.y &&
+            pos.y <= s.y + s.h
+          );
+        }
+
+        return true;
+      });
+
+      repaint();
+    }
     if (!isDrawingRef.current || !currentShapeRef.current) return;
 
     const pos = getCanvasPos(e);
@@ -622,7 +538,6 @@ const ExcalidrawClone = () => {
   const onMouseUp = (e) => {
     if (tool === "hand") { panStartRef.current = null; return; }
 
-    // finish image drag/resize
     if (imgActionRef.current) {
       saveHistory();
       imgActionRef.current = null;
@@ -656,12 +571,22 @@ const ExcalidrawClone = () => {
   const commitText = () => {
     if (textValue.trim() && textBox) {
       saveHistory();
+
       shapesRef.current = [
         ...shapesRef.current,
-        { type: "text", x: textBox.x, y: textBox.y, text: textValue, color, fontSize: 18 },
+        {
+          type: "text",
+          x: textBox.x,
+          y: textBox.y,
+          text: textValue,
+          color,
+          fontSize: fontSize,
+        },
       ];
+
       repaint();
     }
+
     setTextBox(null);
     setTextValue("");
   };
@@ -677,14 +602,9 @@ const ExcalidrawClone = () => {
   // ── cursor ────────────────────────────────────────────────────────────────
   const getCanvasCursor = () => {
     if (tool === "hand") return panStartRef.current ? "grabbing" : "grab";
+
     if (tool === "eraser") return "cell";
-    if (tool === "pointer") {
-      const selIdx = selectedImgRef.current;
-      if (selIdx !== -1 && shapesRef.current[selIdx]) {
-        // Would need live mouse pos to determine — keep as pointer/move
-      }
-      return "default";
-    }
+    if (tool === "pointer") return "default";
     return "crosshair";
   };
   const cursor = getCanvasCursor();
@@ -733,44 +653,16 @@ const ExcalidrawClone = () => {
         {darkMode ? <Sun size={18} /> : <Moon size={18} />}
       </button>
 
-      <div className={`absolute top-16 right-4 w-64 max-h-[300px] overflow-y-auto ${ui.bg} border ${ui.border} rounded-xl shadow-lg p-3 z-40`}>
-
-        <p className={`text-xs font-semibold ${ui.subText} mb-2 uppercase tracking-wider`}>
-          Saved Codes
-        </p>
-
-        {codes.length === 0 && (
-          <p className="text-xs text-gray-400">No code saved</p>
-        )}
-
-        {codes.map((c, idx) => (
-          <div
-            key={idx}
-            className={`flex items-center justify-between px-2 py-2 rounded-md mb-1 cursor-pointer ${ui.hover}`}
-            onClick={() => {
-              setSelectedCodeIdx(idx);
-              setTimeComplexity(c.time);
-              setCodeValue(c.code);
-              setShowCodeModal(true);
-            }}
-          >
-            <span className="text-sm truncate">
-              {c.time || "No complexity"}
-            </span>
-
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setCodes(prev => prev.filter((_, i) => i !== idx));
-              }}
-              className="text-red-400 text-xs px-2"
-            >
-              ✕
-            </button>
-          </div>
-        ))}
-
-      </div>
+      {/* ── CODES PANEL ── */}
+      <CodesPanel
+        ui={ui}
+        codes={codes}
+        setCodes={setCodes}
+        setSelectedCodeIdx={setSelectedCodeIdx}
+        setTimeComplexity={setTimeComplexity}
+        setCodeValue={setCodeValue}
+        setShowCodeModal={setShowCodeModal}
+      />
 
       {/* ── LEETCODE TOGGLE ── */}
       <button onClick={() => setPanelOpen(!panelOpen)}
@@ -788,6 +680,26 @@ const ExcalidrawClone = () => {
               style={{ backgroundColor: c, borderColor: color === c ? "#6965db" : "transparent" }} />
           ))}
         </div>
+        {tool === "text" && (
+          <div className="mt-4">
+            <p className={`text-xs font-semibold ${ui.subText} mb-1 uppercase`}>
+              Text Size
+            </p>
+
+            <input
+              type="range"
+              min="10"
+              max="60"
+              value={fontSize}
+              onChange={(e) => setFontSize(Number(e.target.value))}
+              className="w-full"
+            />
+
+            <p className={`text-xs ${ui.subText}`}>
+              Size: {fontSize}px
+            </p>
+          </div>
+        )}
         {tool === "eraser" && (
           <div className="mt-4">
             <p className={`text-xs font-semibold ${ui.subText} mb-1 uppercase tracking-wider`}>Eraser Size</p>
@@ -823,81 +735,25 @@ const ExcalidrawClone = () => {
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseUp}
         onWheel={onWheel}
+        onDoubleClick={handleDoubleClick}
       />
 
+      {/* ── CODE MODAL ── */}
       {showCodeModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[100]">
-
-          <div className={`w-[500px] max-w-[90%] ${ui.bg} border ${ui.border} rounded-xl shadow-xl p-5`}>
-
-            <h2 className="text-lg font-semibold mb-4">Add Solution Code</h2>
-
-            {/* Time Complexity */}
-            <div className="mb-3">
-              <label className="text-sm mb-1 block">Time Complexity</label>
-              <input
-                type="text"
-                placeholder="e.g. O(n log n)"
-                value={timeComplexity}
-                onChange={(e) => setTimeComplexity(e.target.value)}
-                className={`w-full px-3 py-2 rounded-md border ${ui.border} ${ui.bg} ${ui.text}`}
-              />
-            </div>
-
-            {/* Code */}
-            <div className="mb-4">
-              <label className="text-sm mb-1 block">Code</label>
-              <textarea
-                placeholder="// Write your solution here..."
-                value={codeValue}
-                onChange={(e) => setCodeValue(e.target.value)}
-                className={`w-full h-40 px-3 py-2 rounded-md border ${ui.border} ${ui.bg} ${ui.text} font-mono text-sm`}
-              />
-            </div>
-
-            {/* Buttons */}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowCodeModal(false)}
-                className="px-3 py-1.5 text-sm rounded-md border"
-              >
-                Cancel
-              </button>
-
-              <button
-                onClick={() => {
-                  if (!timeComplexity && !codeValue) return;
-
-                  if (selectedCodeIdx !== -1) {
-                    // update existing
-                    const updated = [...codes];
-                    updated[selectedCodeIdx] = {
-                      time: timeComplexity,
-                      code: codeValue,
-                    };
-                    setCodes(updated);
-                  } else {
-                    // add new
-                    setCodes(prev => [
-                      ...prev,
-                      { time: timeComplexity, code: codeValue }
-                    ]);
-                  }
-
-                  // reset
-                  setSelectedCodeIdx(-1);
-                  setTimeComplexity("");
-                  setCodeValue("");
-                  setShowCodeModal(false);
-                }}
-                className="px-3 py-1.5 text-sm rounded-md bg-violet-500 text-white"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
+        <CodeModal
+          ui={ui}
+          timeComplexity={timeComplexity}
+          setTimeComplexity={setTimeComplexity}
+          codeValue={codeValue}
+          setCodeValue={setCodeValue}
+          selectedCodeIdx={selectedCodeIdx}
+          setSelectedCodeIdx={setSelectedCodeIdx}
+          codes={codes}
+          setCodes={setCodes}
+          setShowCodeModal={setShowCodeModal}
+        />
       )}
+
       {/* ── TEXT OVERLAY ── */}
       {textBox && textScreenPos && (
         <textarea autoFocus value={textValue}
@@ -911,7 +767,7 @@ const ExcalidrawClone = () => {
             border: "1.5px dashed #6965db",
             background: darkMode ? "rgba(30,30,46,0.9)" : "rgba(255,255,255,0.85)",
             resize: "none", outline: "none", padding: "4px 6px",
-            fontSize: 18 * zoom, color: darkMode ? "#e0e0e0" : color,
+            fontSize: fontSize * zoom, color: darkMode ? "#e0e0e0" : color,
             borderRadius: 4, zIndex: 60,
           }}
         />
@@ -924,35 +780,23 @@ const ExcalidrawClone = () => {
         <button onClick={() => applyZoom(0.1)} className={`p-1.5 ${ui.hover} rounded-md`}><Plus size={15} /></button>
       </div>
 
-      {/* ── IMAGE UPLOAD (hidden input) ── */}
+      {/* ── HIDDEN INPUTS ── */}
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-      {/* ── SESSION LOAD (hidden input) ── */}
       <input ref={loadInputRef} type="file" accept=".json" className="hidden" onChange={handleLoadSession} />
 
-      {/* ── UNDO / REDO + UPLOAD + SAVE/LOAD ── */}
+      {/* ── BOTTOM RIGHT ACTIONS ── */}
       <div className="absolute bottom-4 right-4 flex gap-2 items-center z-50">
         <div className={`flex ${ui.bg} rounded-lg border ${ui.border} shadow-sm ${ui.text}`}>
           <button onClick={undo} className={`p-2 ${ui.hover} rounded-l-lg`}><Undo2 size={16} /></button>
           <button onClick={redo} className={`p-2 ${ui.hover} rounded-r-lg`}><Redo2 size={16} /></button>
         </div>
         <LabelButton icon={<ImagePlus size={16} />} label="Upload Image" onClick={() => fileInputRef.current.click()} ui={ui} title="Upload image" />
-        <LabelButton
-          icon={<Code size={16} />}
-          label="Upload Code"
-          onClick={() => setShowCodeModal(true)}
-          ui={ui}
-          title="Add code"
-        />
+        <LabelButton icon={<Code size={16} />} label="Upload Code" onClick={() => setShowCodeModal(true)} ui={ui} title="Add code" />
         <LabelButton icon={<Download size={16} />} label="Save" onClick={saveToBackend} ui={ui} title="Save session" />
-        <LabelButton
-          label="Load"
-          onClick={() => setShowLoadInput(true)}
-          ui={ui}
-        />
+        <LabelButton label="Load" onClick={() => setShowLoadInput(true)} ui={ui} />
 
         {showLoadInput && (
           <div className={`absolute bottom-16 right-4 ${ui.bg} border ${ui.border} rounded-lg p-3 shadow-md z-50`}>
-
             <input
               type="number"
               placeholder="Enter question number"
@@ -960,31 +804,14 @@ const ExcalidrawClone = () => {
               onChange={(e) => setLoadQid(e.target.value)}
               className={`px-2 py-1 border rounded-md text-sm ${ui.bg} ${ui.text}`}
             />
-
             <div className="flex gap-2 mt-2">
-              <button
-                onClick={handleLoadByQid}
-                className="px-2 py-1 bg-violet-500 text-white text-sm rounded"
-              >
-                Load
-              </button>
-
-              <button
-                onClick={() => {
-                  setShowLoadInput(false);
-                  setLoadError("");
-                }}
-                className="px-2 py-1 text-sm border rounded"
-              >
-                Cancel
-              </button>
+              <button onClick={handleLoadByQid} className="px-2 py-1 bg-violet-500 text-white text-sm rounded">Load</button>
+              <button onClick={() => { setShowLoadInput(false); setLoadError(""); }} className="px-2 py-1 text-sm border rounded">Cancel</button>
             </div>
-
-            {loadError && (
-              <p className="text-red-500 text-xs mt-2">{loadError}</p>
-            )}
+            {loadError && <p className="text-red-500 text-xs mt-2">{loadError}</p>}
           </div>
         )}
+
         <button className={`p-2 ${ui.bg} border ${ui.border} rounded-full shadow-sm ${ui.hover} ${ui.text}`}>
           <HelpCircle size={20} />
         </button>

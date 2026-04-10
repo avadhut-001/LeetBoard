@@ -11,7 +11,6 @@ const ToolButton = ({ icon, active = false, onClick, ui }) => (
   </button>
 );
 
-// Button with icon + text label — used in the bottom bar
 export const LabelButton = ({ icon, label, onClick, ui, title }) => (
   <button
     onClick={onClick}

@@ -7,7 +7,6 @@ const difficultyColor = {
   Hard:   { text: "text-red-400",    bg: "bg-red-400/10    border-red-400/30"    },
 };
 
-// ── LeetCode GraphQL via CORS proxy ──────────────────────────────────────────
 const PROXY = "https://corsproxy.io/?url=https://leetcode.com/graphql";
 
 const fetchBySlug = async (slug) => {
@@ -41,7 +40,6 @@ const fetchBySlug = async (slug) => {
   return q;
 };
 
-// Find slug by problem number
 const fetchSlugByNumber = async (num) => {
   const body = {
     query: `
@@ -75,15 +73,12 @@ const fetchSlugByNumber = async (num) => {
   return list[0].titleSlug;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) => {
   const [query, setQuery]       = useState("");
   const [question, setQuestion] = useState(null);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
 
-  // When a session is loaded, restoredQuestion changes — sync it in
   React.useEffect(() => {
     if (restoredQuestion) setQuestion(restoredQuestion);
   }, [restoredQuestion]);
@@ -116,7 +111,6 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
         hints:      data.hints ?? [],
       };
       setQuestion(newQuestion);
-      // notify parent so it can save id+title for filename
       onQuestionChange?.(newQuestion);
     } catch (err) {
       setError('Problem not found. Try the exact name (e.g. "two sum") or number (e.g. "1").');
@@ -171,7 +165,6 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
       {/* BODY */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center h-40">
             <div className="flex gap-1">
@@ -183,7 +176,6 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
           </div>
         )}
 
-        {/* Error */}
         {error && !loading && (
           <div className="m-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex gap-2 items-start">
             <AlertCircle size={15} className="text-red-400 mt-0.5 shrink-0" />
@@ -191,7 +183,6 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
           </div>
         )}
 
-        {/* Empty state */}
         {!loading && !error && !question && (
           <div className="flex flex-col items-center justify-center h-52 gap-3 text-gray-600">
             <Search size={32} strokeWidth={1.2} />
@@ -199,7 +190,6 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
           </div>
         )}
 
-        {/* Question */}
         {!loading && question && (
           <div className="p-5">
             <p className="text-xs text-gray-500 font-mono mb-1">#{question.id}</p>
@@ -221,13 +211,11 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
               </div>
             )}
 
-            {/* Description — raw LeetCode HTML */}
             <div
               className="lc-content text-sm text-gray-300 leading-relaxed"
-              dangerouslySetInnerHTML={{  __html: question?.content || ""  }}
+              dangerouslySetInnerHTML={{ __html: question?.content || "" }}
             />
 
-            {/* Hints */}
             {question?.hints?.length > 0 && (
               <div className="mt-6">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Hints</p>
@@ -243,12 +231,9 @@ const LeetCodePanel = ({ isOpen, onClose, onQuestionChange, restoredQuestion }) 
         )}
       </div>
 
-      {/* Scoped styles for LeetCode HTML */}
       <style>{`
-        /* Hide scrollbar but keep scroll working */
         .flex-1.overflow-y-auto::-webkit-scrollbar { display: none; }
         .flex-1.overflow-y-auto { -ms-overflow-style: none; scrollbar-width: none; }
-
         .lc-content p { margin-bottom: 0.7rem; }
         .lc-content pre {
           background: #252525; border: 1px solid #333; border-radius: 8px;
