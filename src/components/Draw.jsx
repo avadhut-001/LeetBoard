@@ -14,8 +14,8 @@ import { drawShape } from "./Drawshape";
 
 import ToolButton, { LabelButton } from "./ToolButton";
 import LeetCodePanel from "./LeetCodePanel";
-import CodeModal from "./CodeModal";
-import CodesPanel from "./CodesPanel";
+import CodeModal from "./CodeModal.jsx";
+import CodesPanel from "./CodesPanel.jsx";
 
 const BASE_URL =
   window.location.hostname === "localhost"
